@@ -1,0 +1,187 @@
+// ============================================================
+// Content Factory — Telegram Publisher
+// ============================================================
+import type { ContentItem, TelegramConfig, PublishResult, DailyReport } from '../types';
+
+const TELEGRAM_API = 'https://api.telegram.org/bot';
+
+async function telegramApi(token: string, method: string, body: Record<string, unknown>): Promise<unknown> {
+  const res = await fetch(`${TELEGRAM_API}${token}/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const data = await res.json();
+  if (!data.ok) {
+    throw new Error(`Telegram API error: ${data.description || JSON.stringify(data)}`);
+  }
+  return data.result;
+}
+
+// --- Publishing ---
+export async function publishToTelegram(item: ContentItem, config: TelegramConfig): Promise<PublishResult> {
+  try {
+    let result: unknown;
+
+    if (item.imageUrl && item.format !== 'text') {
+      // Photo with caption
+      result = await telegramApi(config.botToken, 'sendPhoto', {
+        chat_id: config.channelId,
+        photo: item.imageUrl,
+        caption: item.text || item.caption || '',
+        parse_mode: 'HTML',
+      });
+    } else if (item.videoUrl) {
+      // Video
+      result = await telegramApi(config.botToken, 'sendVideo', {
+        chat_id: config.channelId,
+        video: item.videoUrl,
+        caption: item.caption || item.text || '',
+        parse_mode: 'HTML',
+      });
+    } else if (item.mediaUrls && item.mediaUrls.length > 1) {
+      // Media group (carousel)
+      const media = item.mediaUrls.map((url, i) => ({
+        type: 'photo' as const,
+        media: url,
+        ...(i === 0 ? { caption: item.text || '', parse_mode: 'HTML' } : {}),
+      }));
+      result = await telegramApi(config.botToken, 'sendMediaGroup', {
+        chat_id: config.channelId,
+        media,
+      });
+    } else {
+      // Text only
+      result = await telegramApi(config.botToken, 'sendMessage', {
+        chat_id: config.channelId,
+        text: item.text || '',
+        parse_mode: 'HTML',
+        disable_web_page_preview: false,
+      });
+    }
+
+    const messageId = (result as { message_id?: number })?.message_id;
+    const channelName = config.channelId.replace(/^@/, '').replace(/^-100/, '');
+
+    return {
+      success: true,
+      platform: 'telegram',
+      url: messageId ? `https://t.me/${channelName}/${messageId}` : undefined,
+      timestamp: new Date().toISOString(),
+    };
+  } catch (error) {
+    return {
+      success: false,
+      platform: 'telegram',
+      error: error instanceof Error ? error.message : String(error),
+      timestamp: new Date().toISOString(),
+    };
+  }
+}
+
+// --- Reports ---
+export async function sendTelegramReport(report: DailyReport, config: TelegramConfig): Promise<void> {
+  const platformStats = Object.entries(report.byPlatform || {})
+    .map(([platform, stats]) => {
+      if (!stats) return '';
+      return `  <b>${platform}</b>: ${stats.published} постов | ${stats.views} просмотров | ${stats.likes} лайков`;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  const text = `📊 <b>Отчёт за ${report.date}</b>
+
+✅ Опубликовано: <b>${report.published}</b>
+❌ Ошибок: <b>${report.failed}</b>
+
+👁 Просмотров: <b>${report.totalViews}</b>
+❤️ Лайков: <b>${report.totalLikes}</b>
+💬 Комментариев: <b>${report.totalComments}</b>
+
+📱 По платформам:
+${platformStats || '  Нет данных'}
+
+${report.topContent ? `🏆 Лучший пост: <a href="${report.topContent.publishedUrl || '#'}">${report.topContent.title}</a>` : ''}`;
+
+  await telegramApi(config.botToken, 'sendMessage', {
+    chat_id: config.reportChatId,
+    text,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+  });
+}
+
+export async function sendTelegramNotification(message: string, config: TelegramConfig): Promise<void> {
+  await telegramApi(config.botToken, 'sendMessage', {
+    chat_id: config.reportChatId,
+    text: message,
+    parse_mode: 'HTML',
+  });
+}
+
+// --- Send TikTok Carousel Draft to Admin ---
+export async function sendTikTokDraft(
+  carousel: {
+    title: string;
+    slides: Array<{ text: string; description: string; slideNumber: number }>;
+    caption: string;
+    hashtags: string[];
+    rubric?: string;
+    zodiacSign?: string;
+  },
+  config: TelegramConfig
+): Promise<void> {
+  const slidesText = carousel.slides
+    .map(s => `<b>[${s.slideNumber}]</b> ${s.text}${s.description ? `\n<i>${s.description}</i>` : ''}`)
+    .join('\n\n');
+
+  const text = [
+    '<b>TikTok Carousel Ready</b>',
+    '',
+    `<b>${carousel.title}</b>`,
+    carousel.rubric ? `${carousel.rubric}${carousel.zodiacSign ? ` | ${carousel.zodiacSign}` : ''}` : '',
+    '',
+    slidesText,
+    '',
+    `<b>Caption:</b> ${carousel.caption}`,
+    carousel.hashtags.join(' '),
+    '',
+    'Kopiruj teksty slajdov, sozdaj karusel v TikTok, dobav trendovyj zvuk.',
+  ].filter(Boolean).join('\n');
+
+  await telegramApi(config.botToken, 'sendMessage', {
+    chat_id: config.reportChatId,
+    text,
+    parse_mode: 'HTML',
+  });
+}
+
+// --- Health Check ---
+export async function checkTelegramConnection(config: TelegramConfig): Promise<{ ok: boolean; botName?: string; error?: string }> {
+  try {
+    const result = await telegramApi(config.botToken, 'getMe', {}) as { username?: string };
+    return { ok: true, botName: result.username };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+// --- Channel Stats ---
+export async function getTelegramChannelInfo(config: TelegramConfig): Promise<{
+  title: string;
+  memberCount: number;
+} | null> {
+  try {
+    const result = await telegramApi(config.botToken, 'getChat', { chat_id: config.channelId }) as {
+      title?: string;
+    };
+    const countResult = await telegramApi(config.botToken, 'getChatMemberCount', { chat_id: config.channelId }) as number;
+    return {
+      title: result.title || 'Unknown',
+      memberCount: countResult,
+    };
+  } catch {
+    return null;
+  }
+}
