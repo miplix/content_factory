@@ -8,7 +8,7 @@ import { getActiveLLMProvider, getActiveImageProvider, getEnabledPlatforms } fro
 import { validateSystem } from '@/lib/validator';
 import { buildDailyReport, formatReportForTelegram, fetchAllPlatformStats } from '@/lib/analytics';
 import { generateTikTokCarousel } from '@/lib/generators/tiktok-carousel';
-import { sendTikTokDraft } from '@/lib/publishers/telegram';
+import { sendTikTokDraft, sendCarouselAsImages } from '@/lib/publishers/telegram';
 import { getContentItems } from '@/lib/db';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
 import type { ZodiacSign, ContentRubric } from '@/lib/types';
@@ -132,7 +132,7 @@ export async function POST(request: Request) {
           zodiacSign: sign,
           config,
         });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         return NextResponse.json({ ok: true });
       }
 
@@ -166,7 +166,7 @@ export async function POST(request: Request) {
           zodiacSign2: sign2,
           config,
         });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         return NextResponse.json({ ok: true });
       }
 
@@ -180,7 +180,7 @@ export async function POST(request: Request) {
             text: `Generiruju "${RUBRIC_RU[rubric]}"...`,
           });
           const carousel = await generateTikTokCarousel({ rubric, config });
-          await sendTikTokDraft(carousel, config.platforms.telegram!);
+          await sendCarouselAsImages(carousel, config.platforms.telegram!);
         } else {
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
@@ -201,7 +201,7 @@ export async function POST(request: Request) {
         });
 
         const carousel = await generateTikTokCarousel({ rubric, zodiacSign: sign, config });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         return NextResponse.json({ ok: true });
       }
 
@@ -278,7 +278,7 @@ export async function POST(request: Request) {
           zodiacSign: randomSign,
           config,
         });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         break;
       }
 
@@ -291,7 +291,7 @@ export async function POST(request: Request) {
           rubric: 'gift',
           config,
         });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         break;
       }
 
@@ -312,7 +312,7 @@ export async function POST(request: Request) {
           zodiacSign2: sign2,
           config,
         });
-        await sendTikTokDraft(carousel, config.platforms.telegram!);
+        await sendCarouselAsImages(carousel, config.platforms.telegram!);
         break;
       }
 

@@ -7,7 +7,7 @@ import { NextResponse } from 'next/server';
 import { loadConfig } from '@/lib/config';
 import { validateConfig } from '@/lib/validator';
 import { generateTikTokCarousel } from '@/lib/generators/tiktok-carousel';
-import { sendTikTokDraft, sendTelegramNotification } from '@/lib/publishers/telegram';
+import { sendCarouselAsImages, sendTelegramNotification } from '@/lib/publishers/telegram';
 import { ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
 import type { ContentRubric, ZodiacSign } from '@/lib/types';
 
@@ -58,7 +58,7 @@ export async function GET(request: Request) {
           config,
         });
 
-        await sendTikTokDraft(carousel, config.platforms.telegram);
+        await sendCarouselAsImages(carousel, config.platforms.telegram);
         results.push(`ok: ${RUBRIC_RU[rubric]} ${sign}`);
       } catch (e) {
         results.push(`fail: ${RUBRIC_RU[rubric]} — ${e instanceof Error ? e.message : String(e)}`);

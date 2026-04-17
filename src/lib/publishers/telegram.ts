@@ -120,6 +120,59 @@ export async function sendTelegramNotification(message: string, config: Telegram
   });
 }
 
+// --- Send PNG album (carousel slides as images) to admin ---
+// Uses multipart/form-data to upload image buffers directly
+export async function sendCarouselAlbum(
+  images: Buffer[],
+  caption: string,
+  config: TelegramConfig
+): Promise<void> {
+  if (images.length === 0) return;
+
+  // Telegram album max = 10 photos
+  const chunks: Buffer[][] = [];
+  for (let i = 0; i < images.length; i += 10) {
+    chunks.push(images.slice(i, i + 10));
+  }
+
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
+    const chunk = chunks[chunkIdx];
+    const form = new FormData();
+    form.append('chat_id', config.reportChatId);
+
+    // Build media array (caption only on first photo of first chunk)
+    const media = chunk.map((_, i) => {
+      const filename = `slide_${chunkIdx * 10 + i + 1}.png`;
+      const isFirstOfFirst = chunkIdx === 0 && i === 0;
+      return {
+        type: 'photo' as const,
+        media: `attach://${filename}`,
+        ...(isFirstOfFirst ? { caption, parse_mode: 'HTML' as const } : {}),
+      };
+    });
+
+    form.append('media', JSON.stringify(media));
+
+    // Attach each image as a file
+    chunk.forEach((buf, i) => {
+      const filename = `slide_${chunkIdx * 10 + i + 1}.png`;
+      // Convert Node Buffer to a Blob (Node 18+ supports Blob)
+      const blob = new Blob([new Uint8Array(buf)], { type: 'image/png' });
+      form.append(filename, blob, filename);
+    });
+
+    const res = await fetch(`${TELEGRAM_API}${config.botToken}/sendMediaGroup`, {
+      method: 'POST',
+      body: form,
+    });
+
+    const data = await res.json();
+    if (!data.ok) {
+      throw new Error(`Telegram sendMediaGroup error: ${data.description || JSON.stringify(data)}`);
+    }
+  }
+}
+
 // --- Send TikTok Carousel Draft to Admin ---
 export async function sendTikTokDraft(
   carousel: {
@@ -155,6 +208,52 @@ export async function sendTikTokDraft(
     text,
     parse_mode: 'HTML',
   });
+}
+
+// --- Send carousel as PNG album + text fallback ---
+export async function sendCarouselAsImages(
+  carousel: {
+    title: string;
+    slides: Array<{ text: string; description: string; slideNumber: number }>;
+    caption: string;
+    hashtags: string[];
+    rubric?: string;
+    zodiacSign?: string;
+  },
+  config: TelegramConfig
+): Promise<void> {
+  // Header message
+  const header = [
+    '<b>TikTok Carousel</b>',
+    `<b>${carousel.title}</b>`,
+    carousel.rubric ? `${carousel.rubric}${carousel.zodiacSign ? ' | ' + carousel.zodiacSign : ''}` : '',
+  ].filter(Boolean).join('\n');
+
+  await telegramApi(config.botToken, 'sendMessage', {
+    chat_id: config.reportChatId,
+    text: header,
+    parse_mode: 'HTML',
+  });
+
+  // Render PNG slides
+  const { renderCarousel } = await import('../generators/slide-renderer');
+  const images = await renderCarousel(
+    carousel.slides.map(s => ({
+      text: s.text,
+      description: s.description || undefined,
+      slideNumber: s.slideNumber,
+      totalSlides: carousel.slides.length,
+      zodiacSign: carousel.zodiacSign as never,
+    }))
+  );
+
+  // Caption for the album (TikTok caption + hashtags)
+  const albumCaption = [
+    `<b>Caption:</b> ${carousel.caption}`,
+    carousel.hashtags.join(' '),
+  ].join('\n').slice(0, 1024); // Telegram caption limit
+
+  await sendCarouselAlbum(images, albumCaption, config);
 }
 
 // --- Health Check ---
