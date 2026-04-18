@@ -26,6 +26,28 @@ async function tgApi(token: string, method: string, body: Record<string, unknown
   return res.json();
 }
 
+// Русские подписи для слэш-меню и кнопки «≡» внутри Telegram.
+// Вызывается из /start — Telegram принимает полный список, перезатирая старый.
+async function ensureBotCommands(token: string) {
+  await Promise.all([
+    tgApi(token, 'setMyCommands', {
+      commands: [
+        { command: 'carousel', description: 'Карусель по знаку зодиака' },
+        { command: 'compat', description: 'Совместимость двух знаков' },
+        { command: 'rubric', description: 'Карусель по рубрике' },
+        { command: 'random', description: 'Случайная карусель' },
+        { command: 'meme', description: 'Мем-карусель' },
+        { command: 'gift', description: 'Карусель «Подарок»' },
+        { command: 'status', description: 'Статус системы' },
+        { command: 'help', description: 'Помощь' },
+      ],
+    }),
+    tgApi(token, 'setChatMenuButton', {
+      menu_button: { type: 'commands' },
+    }),
+  ]);
+}
+
 // --- Главное меню (всегда на экране) ---
 const MAIN_MENU = {
   keyboard: [
@@ -236,6 +258,7 @@ export async function POST(request: Request) {
 
     switch (command) {
       case '/start': {
+        await ensureBotCommands(token);
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
           text: HELP_TEXT,
