@@ -182,7 +182,7 @@ YupSoul — Telegram Mini App, создаёт персональные AI-муз
 - Последний слайд = CTA с упоминанием что первая песня бесплатно
 - Всего ${slideCount} слайдов
 - Каждый слайд вызывает желание свайпнуть дальше
-- Максимум 2-3 эмодзи на слайд`;
+- БЕЗ эмодзи и спецсимволов в полях "text" и "description" — только буквы, цифры и обычная пунктуация. Эмодзи можно использовать ТОЛЬКО в поле "caption".`;
 
   const prompt = `Рубрика: "${RUBRIC_RU[rubric]}"
 ${signContext}
@@ -250,7 +250,7 @@ ${structure ? `Структура:\n${structure}` : ''}
   if (!slides[lastIdx].text.toLowerCase().includes('бесплатно')) {
     slides[lastIdx] = {
       ...slides[lastIdx],
-      text: `Первая песня бесплатно! ${ZODIAC_EMOJI[zodiacSign || 'aries']}\nСсылка в шапке профиля`,
+      text: `Первая песня бесплатно!\nСсылка в шапке профиля`,
       description: 'YupSoul — космическая мелодия твоей души',
     };
   }
@@ -311,12 +311,12 @@ function buildSlideImagePrompt(rubric: ContentRubric, sign?: ZodiacSign, slideIn
 // --- Фоллбек карусель без LLM ---
 function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, config?: AppConfig): TikTokCarousel {
   const signName = sign ? ZODIAC_RU[sign] : '';
-  const signEmoji = sign ? ZODIAC_EMOJI[sign] : '\u2728';
+  const signEmoji = sign ? ZODIAC_EMOJI[sign] : '';
   const botUrl = config?.brand.botUrl || 'https://t.me/Yup_Soul_bot?start=ref_miplix';
 
   const slides: CarouselSlide[] = [
     {
-      text: `${signEmoji} ${signName || 'Твой знак'} — какая у тебя мелодия?`,
+      text: `${signName || 'Твой знак'} — какая у тебя мелодия?`,
       description: 'Свайпни, чтобы узнать',
       imagePrompt: buildSlideImagePrompt(rubric, sign, 0),
       slideNumber: 1,
@@ -340,7 +340,7 @@ function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, conf
       slideNumber: 4,
     },
     {
-      text: `Первая песня — бесплатно! ${signEmoji}`,
+      text: `Первая песня — бесплатно!`,
       description: botUrl,
       imagePrompt: buildSlideImagePrompt(rubric, sign, 4),
       slideNumber: 5,
@@ -350,7 +350,7 @@ function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, conf
   return {
     title: slides[0].text,
     slides,
-    caption: `${RUBRIC_RU[rubric]} ${signEmoji} Первая песня бесплатно!`,
+    caption: `${RUBRIC_RU[rubric]} ${signEmoji} Первая песня бесплатно!`.trim(),
     hashtags: ['#астрология', '#гороскоп', '#зодиак', '#рек', '#yupsoul'],
     coverSlideIndex: 0,
     rubric,

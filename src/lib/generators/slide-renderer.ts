@@ -63,6 +63,17 @@ export interface SlideContent {
   isCTA?: boolean;
 }
 
+// Inter ttf has no emoji glyphs — strip them so Satori doesn't render "NO GLYPH" boxes.
+function stripEmoji(input: string): string {
+  return input
+    .replace(/\p{Extended_Pictographic}/gu, '')
+    .replace(/[\u{1F000}-\u{1FFFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}]/gu, '')
+    .replace(/\uFE0F/g, '')
+    .replace(/\u200D/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
 // Auto-fit font size based on text length
 function pickFontSize(text: string, isCover: boolean): number {
   const len = text.length;
@@ -95,7 +106,8 @@ function generateStars(count: number) {
 
 // Build slide as a satori-compatible JSX tree (using object literals)
 function buildSlideTree(content: SlideContent) {
-  const text = content.text.trim();
+  const text = stripEmoji(content.text);
+  const description = content.description ? stripEmoji(content.description) : undefined;
   const fontSize = pickFontSize(text, content.isCover || false);
   const accentColor = content.isCTA ? COLORS.softGold : COLORS.starWhite;
 
@@ -148,25 +160,6 @@ function buildSlideTree(content: SlideContent) {
                 children: '',
               },
             })),
-          },
-        },
-        // Slide counter (top right)
-        {
-          type: 'div',
-          props: {
-            style: {
-              position: 'absolute',
-              top: '60px',
-              right: '60px',
-              fontSize: '32px',
-              color: COLORS.nebulaGray,
-              fontWeight: 700,
-              padding: '12px 28px',
-              background: 'rgba(0,0,0,0.5)',
-              borderRadius: '40px',
-              display: 'flex',
-            },
-            children: `${content.slideNumber}/${content.totalSlides}`,
           },
         },
         // Center content
@@ -223,7 +216,7 @@ function buildSlideTree(content: SlideContent) {
                 },
               },
               // Description (if present)
-              ...(content.description
+              ...(description
                 ? [{
                     type: 'div',
                     props: {
@@ -238,7 +231,7 @@ function buildSlideTree(content: SlideContent) {
                         fontWeight: 400,
                         display: 'flex',
                       },
-                      children: content.description,
+                      children: description,
                     },
                   }]
                 : []),
@@ -261,7 +254,7 @@ function buildSlideTree(content: SlideContent) {
               fontWeight: 700,
               letterSpacing: '6px',
             },
-            children: content.isCTA ? '\u2728  YUPSOUL  \u2728' : 'YUPSOUL',
+            children: 'YUPSOUL',
           },
         },
       ],

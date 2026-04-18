@@ -76,7 +76,7 @@ export function loadConfig(): AppConfig {
       } : undefined,
     },
     schedule: {
-      timezone: env('SCHEDULE_TIMEZONE', 'Europe/Moscow'),
+      timezone: env('SCHEDULE_TIMEZONE', 'Asia/Tbilisi'),
       postsPerDay: parsePostsPerDay(env('SCHEDULE_POSTS_PER_DAY', 'telegram:3,instagram:1,tiktok:2,youtube:1,vk:1')),
       publishTimes: parsePublishTimes(env('SCHEDULE_PUBLISH_TIMES', 'telegram:09:00,15:00,20:00;instagram:11:00;tiktok:12:00,22:00;youtube:14:00;vk:13:00')),
     },

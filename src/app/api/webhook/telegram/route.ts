@@ -1,14 +1,13 @@
 // ============================================================
 // Telegram Bot Webhook — YupSoul Content Factory
-// Commands with inline buttons for zodiac sign selection
+// Русифицированный интерфейс с упрощённым меню
 // ============================================================
 import { NextResponse } from 'next/server';
 import { loadConfig } from '@/lib/config';
 import { getActiveLLMProvider, getActiveImageProvider, getEnabledPlatforms } from '@/lib/config';
 import { validateSystem } from '@/lib/validator';
-import { buildDailyReport, formatReportForTelegram, fetchAllPlatformStats } from '@/lib/analytics';
 import { generateTikTokCarousel } from '@/lib/generators/tiktok-carousel';
-import { sendTikTokDraft, sendCarouselAsImages } from '@/lib/publishers/telegram';
+import { sendCarouselAsImages } from '@/lib/publishers/telegram';
 import { getContentItems } from '@/lib/db';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
 import type { ZodiacSign, ContentRubric } from '@/lib/types';
@@ -27,54 +26,77 @@ async function tgApi(token: string, method: string, body: Record<string, unknown
   return res.json();
 }
 
-// --- Zodiac keyboard (4x3 grid) ---
+// --- Главное меню (всегда на экране) ---
+const MAIN_MENU = {
+  keyboard: [
+    [{ text: 'Карусель по знаку' }, { text: 'Совместимость' }],
+    [{ text: 'Случайная' }, { text: 'Рубрика' }],
+    [{ text: 'Статус' }, { text: 'Помощь' }],
+  ],
+  resize_keyboard: true,
+  is_persistent: true,
+};
+
+// --- Клавиатура знаков зодиака (4×3) ---
 function zodiacKeyboard(prefix: string) {
+  const cells = ZODIAC_SIGNS.map(s => ({
+    text: `${ZODIAC_EMOJI[s]} ${ZODIAC_RU[s]}`,
+    callback_data: `${prefix}:${s}`,
+  }));
   return {
-    inline_keyboard: [
-      [
-        { text: `${ZODIAC_EMOJI.aries} Ovn`, callback_data: `${prefix}:aries` },
-        { text: `${ZODIAC_EMOJI.taurus} Tel`, callback_data: `${prefix}:taurus` },
-        { text: `${ZODIAC_EMOJI.gemini} Bliz`, callback_data: `${prefix}:gemini` },
-        { text: `${ZODIAC_EMOJI.cancer} Rak`, callback_data: `${prefix}:cancer` },
-      ],
-      [
-        { text: `${ZODIAC_EMOJI.leo} Lev`, callback_data: `${prefix}:leo` },
-        { text: `${ZODIAC_EMOJI.virgo} Deva`, callback_data: `${prefix}:virgo` },
-        { text: `${ZODIAC_EMOJI.libra} Vesy`, callback_data: `${prefix}:libra` },
-        { text: `${ZODIAC_EMOJI.scorpio} Skorp`, callback_data: `${prefix}:scorpio` },
-      ],
-      [
-        { text: `${ZODIAC_EMOJI.sagittarius} Strel`, callback_data: `${prefix}:sagittarius` },
-        { text: `${ZODIAC_EMOJI.capricorn} Kozr`, callback_data: `${prefix}:capricorn` },
-        { text: `${ZODIAC_EMOJI.aquarius} Vodol`, callback_data: `${prefix}:aquarius` },
-        { text: `${ZODIAC_EMOJI.pisces} Ryby`, callback_data: `${prefix}:pisces` },
-      ],
-    ],
+    inline_keyboard: [cells.slice(0, 4), cells.slice(4, 8), cells.slice(8, 12)],
   };
 }
 
-// --- Rubric keyboard ---
+// --- Клавиатура рубрик ---
+const BOT_RUBRICS: ContentRubric[] = [
+  'zodiac_sound',
+  'compatibility',
+  'zodiac_memes',
+  'signs_as_genres',
+  'gift',
+  'astro_facts',
+  'daily_energy',
+];
+
 function rubricKeyboard() {
-  return {
-    inline_keyboard: [
-      [
-        { text: 'Zvuk znaka', callback_data: 'rub:zodiac_sound' },
-        { text: 'Sovmestimost', callback_data: 'rub:compatibility' },
-      ],
-      [
-        { text: 'Memy', callback_data: 'rub:zodiac_memes' },
-        { text: 'Zhanry', callback_data: 'rub:signs_as_genres' },
-      ],
-      [
-        { text: 'Podarok', callback_data: 'rub:gift' },
-        { text: 'Fakty', callback_data: 'rub:astro_facts' },
-      ],
-      [
-        { text: 'Energiya dnya', callback_data: 'rub:daily_energy' },
-      ],
-    ],
-  };
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < BOT_RUBRICS.length; i += 2) {
+    rows.push(
+      BOT_RUBRICS.slice(i, i + 2).map(r => ({
+        text: RUBRIC_RU[r],
+        callback_data: `rub:${r}`,
+      })),
+    );
+  }
+  return { inline_keyboard: rows };
 }
+
+// --- Соответствие нажатий на reply-клавиатуре → команды ---
+const MENU_ALIASES: Record<string, string> = {
+  'карусель по знаку': '/carousel',
+  'карусель': '/carousel',
+  'совместимость': '/compat',
+  'случайная': '/random',
+  'рубрика': '/rubric',
+  'статус': '/status',
+  'помощь': '/help',
+};
+
+const HELP_TEXT = [
+  '<b>YupSoul — фабрика контента</b>',
+  '',
+  'Выбери действие в меню снизу или используй команды:',
+  '',
+  '/carousel — карусель по знаку зодиака',
+  '/compat — совместимость двух знаков',
+  '/rubric — карусель по выбранной рубрике',
+  '/random — случайная карусель',
+  '/meme — мем-карусель',
+  '/gift — карусель «Подарок»',
+  '/status — статус системы',
+  '/validate — диагностика',
+].join('\n');
 
 interface TelegramUpdate {
   message?: {
@@ -90,7 +112,7 @@ interface TelegramUpdate {
   };
 }
 
-// State for multi-step flows (compatibility needs 2 signs)
+// Состояние для двухшаговых сценариев (совместимость)
 const pendingCompat: Map<number, { sign1: ZodiacSign }> = new Map();
 
 export async function POST(request: Request) {
@@ -102,7 +124,7 @@ export async function POST(request: Request) {
     const token = config.platforms.telegram.botToken;
     const adminChatId = config.platforms.telegram.reportChatId;
 
-    // --- Handle callback_query (button presses) ---
+    // --- Нажатия inline-кнопок ---
     if (update.callback_query) {
       const cb = update.callback_query;
       const chatId = cb.message?.chat.id;
@@ -113,20 +135,16 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      // Answer callback to remove loading state
-      await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Generiruju...' });
+      await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Генерирую…' });
 
-      // Parse callback data
       const [prefix, value] = data.split(':');
 
       if (prefix === 'car') {
-        // Carousel for specific sign
         const sign = value as ZodiacSign;
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `${ZODIAC_EMOJI[sign]} Generiruju karusel dlya ${ZODIAC_RU[sign]}...`,
+          text: `${ZODIAC_EMOJI[sign]} Генерирую карусель для знака «${ZODIAC_RU[sign]}»…`,
         });
-
         const carousel = await generateTikTokCarousel({
           rubric: 'zodiac_sound',
           zodiacSign: sign,
@@ -137,19 +155,17 @@ export async function POST(request: Request) {
       }
 
       if (prefix === 'cmp1') {
-        // Compatibility — first sign selected, ask for second
         const sign1 = value as ZodiacSign;
         pendingCompat.set(chatId, { sign1 });
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `${ZODIAC_EMOJI[sign1]} ${ZODIAC_RU[sign1]} + ...?\nVyberi vtoroj znak:`,
+          text: `Первый знак: ${ZODIAC_EMOJI[sign1]} ${ZODIAC_RU[sign1]}\nТеперь выбери второй:`,
           reply_markup: zodiacKeyboard('cmp2'),
         });
         return NextResponse.json({ ok: true });
       }
 
       if (prefix === 'cmp2') {
-        // Compatibility — second sign selected, generate
         const sign2 = value as ZodiacSign;
         const pending = pendingCompat.get(chatId);
         const sign1 = pending?.sign1 || 'aries';
@@ -157,12 +173,12 @@ export async function POST(request: Request) {
 
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `${ZODIAC_EMOJI[sign1 as ZodiacSign]} ${ZODIAC_RU[sign1 as ZodiacSign]} + ${ZODIAC_EMOJI[sign2]} ${ZODIAC_RU[sign2]} — generiruju...`,
+          text: `${ZODIAC_EMOJI[sign1]} ${ZODIAC_RU[sign1]} + ${ZODIAC_EMOJI[sign2]} ${ZODIAC_RU[sign2]} — генерирую…`,
         });
 
         const carousel = await generateTikTokCarousel({
           rubric: 'compatibility',
-          zodiacSign: sign1 as ZodiacSign,
+          zodiacSign: sign1,
           zodiacSign2: sign2,
           config,
         });
@@ -171,20 +187,18 @@ export async function POST(request: Request) {
       }
 
       if (prefix === 'rub') {
-        // Rubric selected — ask for sign
         const rubric = value as ContentRubric;
         if (rubric === 'signs_as_genres' || rubric === 'daily_energy') {
-          // These don't need a specific sign
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
-            text: `Generiruju "${RUBRIC_RU[rubric]}"...`,
+            text: `Генерирую карусель «${RUBRIC_RU[rubric]}»…`,
           });
           const carousel = await generateTikTokCarousel({ rubric, config });
           await sendCarouselAsImages(carousel, config.platforms.telegram!);
         } else {
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
-            text: `Vyberi znak dlya "${RUBRIC_RU[rubric]}":`,
+            text: `Рубрика «${RUBRIC_RU[rubric]}». Выбери знак:`,
             reply_markup: zodiacKeyboard(`gen_${rubric}`),
           });
         }
@@ -192,12 +206,11 @@ export async function POST(request: Request) {
       }
 
       if (prefix.startsWith('gen_')) {
-        // Rubric + sign — generate
         const rubric = prefix.replace('gen_', '') as ContentRubric;
         const sign = value as ZodiacSign;
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `${ZODIAC_EMOJI[sign]} Generiruju "${RUBRIC_RU[rubric]}" dlya ${ZODIAC_RU[sign]}...`,
+          text: `${ZODIAC_EMOJI[sign]} «${RUBRIC_RU[rubric]}» для знака «${ZODIAC_RU[sign]}» — генерирую…`,
         });
 
         const carousel = await generateTikTokCarousel({ rubric, zodiacSign: sign, config });
@@ -208,33 +221,34 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
-    // --- Handle text messages ---
+    // --- Текстовые сообщения ---
     const message = update.message;
     if (!message?.text) return NextResponse.json({ ok: true });
 
     const chatId = String(message.chat.id);
     if (chatId !== adminChatId) return NextResponse.json({ ok: true });
 
-    const command = message.text.split(' ')[0].toLowerCase();
+    const raw = message.text.trim();
+    const lower = raw.toLowerCase();
+    const command = lower.startsWith('/')
+      ? lower.split(/[\s@]/)[0]
+      : MENU_ALIASES[lower] || '';
 
     switch (command) {
-      case '/start':
+      case '/start': {
+        await tgApi(token, 'sendMessage', {
+          chat_id: chatId,
+          text: HELP_TEXT,
+          parse_mode: 'HTML',
+          reply_markup: MAIN_MENU,
+        });
+        break;
+      }
+
       case '/help': {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: [
-            '<b>YupSoul Content Factory</b>',
-            '',
-            'Komandy:',
-            '/carousel — karusel dlya znaka zodiaka',
-            '/compat — sovmestimost dvuh znakov',
-            '/rubric — vybrat rubriku',
-            '/meme — mem-karusel',
-            '/gift — karusel "podarok"',
-            '/random — sluchajnaja karusel',
-            '/status — status zavoda',
-            '/validate — proverka Spokom',
-          ].join('\n'),
+          text: HELP_TEXT,
           parse_mode: 'HTML',
         });
         break;
@@ -243,7 +257,7 @@ export async function POST(request: Request) {
       case '/carousel': {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Vyberi znak zodiaka:',
+          text: 'Выбери знак зодиака:',
           reply_markup: zodiacKeyboard('car'),
         });
         break;
@@ -252,7 +266,7 @@ export async function POST(request: Request) {
       case '/compat': {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Sovmestimost — vyberi PERVYJ znak:',
+          text: 'Совместимость. Выбери первый знак:',
           reply_markup: zodiacKeyboard('cmp1'),
         });
         break;
@@ -261,7 +275,7 @@ export async function POST(request: Request) {
       case '/rubric': {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Vyberi rubriku:',
+          text: 'Выбери рубрику:',
           reply_markup: rubricKeyboard(),
         });
         break;
@@ -271,7 +285,7 @@ export async function POST(request: Request) {
         const randomSign = ZODIAC_SIGNS[Math.floor(Math.random() * 12)];
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `Generiruju mem-karusel...`,
+          text: 'Генерирую мем-карусель…',
         });
         const carousel = await generateTikTokCarousel({
           rubric: 'zodiac_memes',
@@ -285,7 +299,7 @@ export async function POST(request: Request) {
       case '/gift': {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: 'Generiruju karusel "Podarok"...',
+          text: 'Генерирую карусель «Подарок»…',
         });
         const carousel = await generateTikTokCarousel({
           rubric: 'gift',
@@ -296,14 +310,13 @@ export async function POST(request: Request) {
       }
 
       case '/random': {
-        const rubrics: ContentRubric[] = ['zodiac_sound', 'compatibility', 'zodiac_memes', 'signs_as_genres', 'astro_facts', 'gift'];
-        const rub = rubrics[Math.floor(Math.random() * rubrics.length)];
+        const rub = BOT_RUBRICS[Math.floor(Math.random() * BOT_RUBRICS.length)];
         const sign = ZODIAC_SIGNS[Math.floor(Math.random() * 12)];
         const sign2 = rub === 'compatibility' ? ZODIAC_SIGNS[Math.floor(Math.random() * 12)] : undefined;
 
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
-          text: `Sluchajnaja karusel: "${RUBRIC_RU[rub]}" ${ZODIAC_EMOJI[sign]} ${ZODIAC_RU[sign]}...`,
+          text: `Случайная карусель: «${RUBRIC_RU[rub]}» ${ZODIAC_EMOJI[sign]} ${ZODIAC_RU[sign]}…`,
         });
 
         const carousel = await generateTikTokCarousel({
@@ -330,17 +343,17 @@ export async function POST(request: Request) {
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
           text: [
-            '<b>YupSoul Content Factory — Status</b>',
+            '<b>YupSoul — статус</b>',
             '',
-            `LLM: <b>${llm || 'ne nastroeno'}</b>`,
-            `Kartinki: <b>${img || 'placeholder'}</b>`,
-            `Platformy: <b>${platforms.join(', ') || 'net'}</b>`,
+            `Модель текста: <b>${llm || 'не настроено'}</b>`,
+            `Модель картинок: <b>${img || 'placeholder'}</b>`,
+            `Платформы: <b>${platforms.join(', ') || 'нет'}</b>`,
             '',
-            `Zaplanrovano: <b>${planned}</b>`,
-            `Sgenerovano: <b>${generated}</b>`,
-            `Opublikovano: <b>${published}</b>`,
-            `Oshibok: <b>${failed}</b>`,
-            `Vsego: <b>${items.length}</b>`,
+            `Запланировано: <b>${planned}</b>`,
+            `Сгенерировано: <b>${generated}</b>`,
+            `Опубликовано: <b>${published}</b>`,
+            `Ошибок: <b>${failed}</b>`,
+            `Всего: <b>${items.length}</b>`,
           ].join('\n'),
           parse_mode: 'HTML',
         });
@@ -358,10 +371,10 @@ export async function POST(request: Request) {
       }
 
       default: {
-        if (message.text.startsWith('/')) {
+        if (raw.startsWith('/')) {
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
-            text: 'Neizvestnaja komanda. /help — spisok komand.',
+            text: 'Неизвестная команда. Нажми «Помощь» или отправь /help.',
           });
         }
       }

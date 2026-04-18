@@ -190,17 +190,17 @@ export async function sendTikTokDraft(
     .join('\n\n');
 
   const text = [
-    '<b>TikTok Carousel Ready</b>',
+    '<b>Черновик TikTok-карусели</b>',
     '',
     `<b>${carousel.title}</b>`,
     carousel.rubric ? `${carousel.rubric}${carousel.zodiacSign ? ` | ${carousel.zodiacSign}` : ''}` : '',
     '',
     slidesText,
     '',
-    `<b>Caption:</b> ${carousel.caption}`,
+    `<b>Подпись:</b> ${carousel.caption}`,
     carousel.hashtags.join(' '),
     '',
-    'Kopiruj teksty slajdov, sozdaj karusel v TikTok, dobav trendovyj zvuk.',
+    'Скопируй тексты слайдов, собери карусель в TikTok, добавь трендовый звук.',
   ].filter(Boolean).join('\n');
 
   await telegramApi(config.botToken, 'sendMessage', {
@@ -224,7 +224,7 @@ export async function sendCarouselAsImages(
 ): Promise<void> {
   // Header message
   const header = [
-    '<b>TikTok Carousel</b>',
+    '<b>TikTok-карусель</b>',
     `<b>${carousel.title}</b>`,
     carousel.rubric ? `${carousel.rubric}${carousel.zodiacSign ? ' | ' + carousel.zodiacSign : ''}` : '',
   ].filter(Boolean).join('\n');
@@ -249,7 +249,7 @@ export async function sendCarouselAsImages(
 
   // Caption for the album (TikTok caption + hashtags)
   const albumCaption = [
-    `<b>Caption:</b> ${carousel.caption}`,
+    `<b>Подпись:</b> ${carousel.caption}`,
     carousel.hashtags.join(' '),
   ].join('\n').slice(0, 1024); // Telegram caption limit
 
