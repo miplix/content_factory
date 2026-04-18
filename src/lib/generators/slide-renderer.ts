@@ -28,9 +28,14 @@ const COLORS = {
 // Lazy-loaded font cache
 let fontRegular: ArrayBuffer | null = null;
 let fontBold: ArrayBuffer | null = null;
+let fontEmoji: ArrayBuffer | null = null;
+
+function toArrayBuffer(buf: Buffer): ArrayBuffer {
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+}
 
 function loadFonts() {
-  if (fontRegular && fontBold) return { fontRegular, fontBold };
+  if (fontRegular && fontBold && fontEmoji) return { fontRegular, fontBold, fontEmoji };
 
   const candidates = [
     path.join(process.cwd(), 'src/lib/fonts'),
@@ -41,16 +46,16 @@ function loadFonts() {
   for (const dir of candidates) {
     const regularPath = path.join(dir, 'Inter-Regular.ttf');
     const boldPath = path.join(dir, 'Inter-Bold.ttf');
-    if (fs.existsSync(regularPath) && fs.existsSync(boldPath)) {
-      const regBuf = fs.readFileSync(regularPath);
-      const boldBuf = fs.readFileSync(boldPath);
-      fontRegular = regBuf.buffer.slice(regBuf.byteOffset, regBuf.byteOffset + regBuf.byteLength) as ArrayBuffer;
-      fontBold = boldBuf.buffer.slice(boldBuf.byteOffset, boldBuf.byteOffset + boldBuf.byteLength) as ArrayBuffer;
-      return { fontRegular, fontBold };
+    const emojiPath = path.join(dir, 'NotoEmoji-Regular.ttf');
+    if (fs.existsSync(regularPath) && fs.existsSync(boldPath) && fs.existsSync(emojiPath)) {
+      fontRegular = toArrayBuffer(fs.readFileSync(regularPath));
+      fontBold = toArrayBuffer(fs.readFileSync(boldPath));
+      fontEmoji = toArrayBuffer(fs.readFileSync(emojiPath));
+      return { fontRegular, fontBold, fontEmoji };
     }
   }
 
-  throw new Error(`Inter fonts not found. Tried: ${candidates.join(', ')}`);
+  throw new Error(`Fonts not found. Tried: ${candidates.join(', ')}`);
 }
 
 export interface SlideContent {
@@ -96,6 +101,7 @@ function generateStars(count: number) {
 // Build slide as a satori-compatible JSX tree (using object literals)
 function buildSlideTree(content: SlideContent) {
   const text = content.text.trim();
+  const description = content.description?.trim();
   const fontSize = pickFontSize(text, content.isCover || false);
   const accentColor = content.isCTA ? COLORS.softGold : COLORS.starWhite;
 
@@ -116,7 +122,7 @@ function buildSlideTree(content: SlideContent) {
         background: bgGradient,
         display: 'flex',
         position: 'relative',
-        fontFamily: 'Inter',
+        fontFamily: 'Inter, NotoEmoji',
       },
       children: [
         // Stars layer
@@ -148,25 +154,6 @@ function buildSlideTree(content: SlideContent) {
                 children: '',
               },
             })),
-          },
-        },
-        // Slide counter (top right)
-        {
-          type: 'div',
-          props: {
-            style: {
-              position: 'absolute',
-              top: '60px',
-              right: '60px',
-              fontSize: '32px',
-              color: COLORS.nebulaGray,
-              fontWeight: 700,
-              padding: '12px 28px',
-              background: 'rgba(0,0,0,0.5)',
-              borderRadius: '40px',
-              display: 'flex',
-            },
-            children: `${content.slideNumber}/${content.totalSlides}`,
           },
         },
         // Center content
@@ -223,7 +210,7 @@ function buildSlideTree(content: SlideContent) {
                 },
               },
               // Description (if present)
-              ...(content.description
+              ...(description
                 ? [{
                     type: 'div',
                     props: {
@@ -238,7 +225,7 @@ function buildSlideTree(content: SlideContent) {
                         fontWeight: 400,
                         display: 'flex',
                       },
-                      children: content.description,
+                      children: description,
                     },
                   }]
                 : []),
@@ -261,7 +248,7 @@ function buildSlideTree(content: SlideContent) {
               fontWeight: 700,
               letterSpacing: '6px',
             },
-            children: content.isCTA ? '\u2728  YUPSOUL  \u2728' : 'YUPSOUL',
+            children: 'YUPSOUL',
           },
         },
       ],
@@ -271,7 +258,7 @@ function buildSlideTree(content: SlideContent) {
 
 // Render single slide to PNG buffer
 export async function renderSlide(content: SlideContent): Promise<Buffer> {
-  const { fontRegular: fr, fontBold: fb } = loadFonts();
+  const { fontRegular: fr, fontBold: fb, fontEmoji: fe } = loadFonts();
   const tree = buildSlideTree(content);
 
   const svg = await satori(tree as never, {
@@ -280,6 +267,7 @@ export async function renderSlide(content: SlideContent): Promise<Buffer> {
     fonts: [
       { name: 'Inter', data: fr, weight: 400, style: 'normal' },
       { name: 'Inter', data: fb, weight: 700, style: 'normal' },
+      { name: 'NotoEmoji', data: fe, weight: 400, style: 'normal' },
     ],
   });
 
