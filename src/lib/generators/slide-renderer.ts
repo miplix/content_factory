@@ -248,12 +248,48 @@ function buildSlideTree(content: SlideContent) {
               fontWeight: 700,
               letterSpacing: '6px',
             },
-            children: 'YUPSOUL',
+            children: '\u2728  YUPSOUL  \u2728',
           },
         },
       ],
     },
   };
+}
+
+// Convert a JS string (possibly a multi-codepoint emoji) into the dash-joined hex
+// twemoji uses in its filenames. Drops variation selectors (U+FE0F) but keeps ZWJs.
+function twemojiCodePoint(text: string): string {
+  const parts: string[] = [];
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp === 0xfe0f) continue;
+    parts.push(cp.toString(16));
+  }
+  return parts.join('-');
+}
+
+// Small per-process cache so repeat emojis within one render pass hit memory.
+const twemojiCache = new Map<string, string>();
+
+async function fetchTwemojiDataUrl(emoji: string): Promise<string> {
+  const code = twemojiCodePoint(emoji);
+  if (!code) return '';
+  const cached = twemojiCache.get(code);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await fetch(`https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg`);
+    if (!res.ok) {
+      twemojiCache.set(code, '');
+      return '';
+    }
+    const svg = await res.text();
+    const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
+    twemojiCache.set(code, dataUrl);
+    return dataUrl;
+  } catch {
+    twemojiCache.set(code, '');
+    return '';
+  }
 }
 
 // Render single slide to PNG buffer
@@ -269,6 +305,14 @@ export async function renderSlide(content: SlideContent): Promise<Buffer> {
       { name: 'Inter', data: fb, weight: 700, style: 'normal' },
       { name: 'NotoEmoji', data: fe, weight: 400, style: 'normal' },
     ],
+    loadAdditionalAsset: async (code: string, segment: string) => {
+      if (code === 'emoji') {
+        // Return twemoji SVG data URL — Satori renders it as an image inline.
+        // If fetch fails, fall back to the NotoEmoji font (monochrome white).
+        return (await fetchTwemojiDataUrl(segment)) || '';
+      }
+      return [];
+    },
   });
 
   const resvg = new Resvg(svg, {
