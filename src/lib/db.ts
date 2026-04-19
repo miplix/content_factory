@@ -10,6 +10,7 @@ import type { ContentItem, ContentPlan, DailyReport } from './types';
 
 interface AppSettings {
   deliveryHours: number[]; // Tbilisi hours when daily cron sends carousels
+  usedThemes: Array<{ theme: string; usedAt: string }>; // ISO timestamps
 }
 
 interface DB {
@@ -30,7 +31,7 @@ let store: DB = {
   plans: [],
   items: [],
   reports: [],
-  settings: { deliveryHours: parseDeliveryHoursEnv() },
+  settings: { deliveryHours: parseDeliveryHoursEnv(), usedThemes: [] },
 };
 
 // --- Vercel KV wrapper (will use @vercel/kv when deployed) ---
@@ -105,6 +106,25 @@ export function getDeliveryHours(): number[] {
 
 export function setDeliveryHours(hours: number[]): void {
   store.settings.deliveryHours = hours.filter(h => h >= 0 && h <= 23).sort((a, b) => a - b);
+}
+
+// --- Theme statistics ---
+export function recordUsedTheme(theme: string): void {
+  store.settings.usedThemes.push({ theme, usedAt: new Date().toISOString() });
+  if (store.settings.usedThemes.length > 200) {
+    store.settings.usedThemes.splice(0, store.settings.usedThemes.length - 200);
+  }
+}
+
+export function getRecentThemes(days = 7): string[] {
+  const cutoff = Date.now() - days * 86_400_000;
+  return store.settings.usedThemes
+    .filter(u => new Date(u.usedAt).getTime() > cutoff)
+    .map(u => u.theme);
+}
+
+export function getUsedThemesLog(limit = 10): Array<{ theme: string; usedAt: string }> {
+  return store.settings.usedThemes.slice(-limit).reverse();
 }
 
 // --- Utility ---

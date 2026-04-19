@@ -8,7 +8,7 @@ import { getActiveLLMProvider, getActiveImageProvider, getEnabledPlatforms } fro
 import { validateSystem } from '@/lib/validator';
 import { generateTikTokCarousel, generateAllSignsCarousel, pickAllSignsTheme } from '@/lib/generators/tiktok-carousel';
 import { sendCarouselAsImages } from '@/lib/publishers/telegram';
-import { getContentItems, getDeliveryHours, setDeliveryHours } from '@/lib/db';
+import { getContentItems, getDeliveryHours, setDeliveryHours, getUsedThemesLog, getRecentThemes } from '@/lib/db';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
 import type { ZodiacSign, ContentRubric, AppConfig, TelegramConfig } from '@/lib/types';
 
@@ -175,6 +175,9 @@ function scheduleText(hours: number[]): string {
 // Состояние для двухшаговых сценариев
 const pendingCompat: Map<number, { sign1: ZodiacSign }> = new Map();
 
+// Ожидание ввода кастомной темы (chatId → true)
+const pendingCustomTheme = new Map<number, boolean>();
+
 // Параметры для кнопки «Повторить»
 interface RetryParams {
   type: 'carousel' | 'compat' | 'rubric' | 'all';
@@ -277,6 +280,22 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
+      // --- Выбор темы для /all ---
+      if (data === 'all_auto') {
+        const theme = pickAllSignsTheme(getRecentThemes(7));
+        await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: `Тема: ${theme}` });
+        await tgApi(token, 'sendMessage', { chat_id: chatId, text: `✨ Тема: «${theme}» — генерирую…` });
+        await generateAndSend({ type: 'all', theme }, chatId, token, config, config.platforms.telegram!);
+        return NextResponse.json({ ok: true });
+      }
+
+      if (data === 'all_custom') {
+        pendingCustomTheme.set(chatId, true);
+        await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id });
+        await tgApi(token, 'sendMessage', { chat_id: chatId, text: '✏️ Напиши тему (например: <i>когда злятся</i> или <i>в отпуске</i>):', parse_mode: 'HTML' });
+        return NextResponse.json({ ok: true });
+      }
+
       await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Генерирую…' });
 
       if (prefix === 'car') {
@@ -368,6 +387,19 @@ export async function POST(request: Request) {
 
     const raw = message.text.trim();
     const lower = raw.toLowerCase();
+
+    // Ввод кастомной темы для /all
+    if (pendingCustomTheme.has(message.chat.id)) {
+      pendingCustomTheme.delete(message.chat.id);
+      const theme = raw.slice(0, 100);
+      await tgApi(token, 'sendMessage', {
+        chat_id: chatId,
+        text: `✨ Тема «${theme}» — генерирую все 12 знаков…`,
+      });
+      await generateAndSend({ type: 'all', theme }, chatId, token, config, config.platforms.telegram!);
+      return NextResponse.json({ ok: true });
+    }
+
     const command = lower.startsWith('/')
       ? lower.split(/[\s@]/)[0]
       : MENU_ALIASES[lower] || '';
@@ -421,15 +453,25 @@ export async function POST(request: Request) {
       }
 
       case '/all': {
-        const theme = raw.replace(/^\/all/i, '').trim() || pickAllSignsTheme();
-        await tgApi(token, 'sendMessage', {
-          chat_id: chatId,
-          text: `Генерирую карусель для всех 12 знаков: «${theme}»…`,
-        });
-        await generateAndSend(
-          { type: 'all', theme },
-          chatId, token, config, config.platforms.telegram!,
-        );
+        const themeArg = raw.replace(/^\/all/i, '').trim();
+        if (themeArg) {
+          await tgApi(token, 'sendMessage', {
+            chat_id: chatId,
+            text: `Генерирую карусель для всех 12 знаков: «${themeArg}»…`,
+          });
+          await generateAndSend({ type: 'all', theme: themeArg }, chatId, token, config, config.platforms.telegram!);
+        } else {
+          await tgApi(token, 'sendMessage', {
+            chat_id: chatId,
+            text: '🌌 Карусель для всех 12 знаков.\nКакую тему использовать?',
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: '🎲 Случайная тема', callback_data: 'all_auto' }],
+                [{ text: '✏️ Своя тема', callback_data: 'all_custom' }],
+              ],
+            },
+          });
+        }
         break;
       }
 
@@ -513,6 +555,14 @@ export async function POST(request: Request) {
             `Опубликовано: <b>${published}</b>`,
             `Ошибок: <b>${failed}</b>`,
             `Всего: <b>${items.length}</b>`,
+            '',
+            `Расписание: <b>${getDeliveryHours().map(h => `${h}:00`).join(', ') || 'не задано'}</b>`,
+            '',
+            '<b>Последние темы «Все 12 знаков»:</b>',
+            ...getUsedThemesLog(5).map(u => {
+              const d = new Date(u.usedAt);
+              return `• ${u.theme} <i>(${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })})</i>`;
+            }),
           ].join('\n'),
           parse_mode: 'HTML',
         });
