@@ -320,9 +320,8 @@ export async function renderSlide(content: SlideContent): Promise<Buffer> {
     ],
     loadAdditionalAsset: async (code: string, segment: string) => {
       if (code === 'emoji') {
-        // Return twemoji SVG data URL for colored emoji rendering.
-        // undefined → Satori falls back to NotoEmoji font (monochrome white).
-        return await fetchTwemojiDataUrl(segment);
+        // data URL → coloured twemoji image; [] → fall back to NotoEmoji
+        return (await fetchTwemojiDataUrl(segment)) ?? [];
       }
       return [];
     },
