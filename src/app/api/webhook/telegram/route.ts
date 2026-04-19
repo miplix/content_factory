@@ -27,27 +27,33 @@ async function tgApi(token: string, method: string, body: Record<string, unknown
 }
 
 // Русские подписи для слэш-меню и кнопки «≡» внутри Telegram.
-// Вызывается из /start — Telegram принимает полный список, перезатирая старый.
+const BOT_COMMAND_LIST = [
+  { command: 'start', description: 'Запустить бота' },
+  { command: 'carousel', description: 'Карусель по знаку зодиака' },
+  { command: 'compat', description: 'Совместимость двух знаков' },
+  { command: 'all', description: 'Все 12 знаков на одну тему' },
+  { command: 'rubric', description: 'Карусель по рубрике' },
+  { command: 'random', description: 'Случайная карусель' },
+  { command: 'meme', description: 'Мем-карусель' },
+  { command: 'gift', description: 'Карусель «Подарок»' },
+  { command: 'schedule', description: 'Настроить время доставки' },
+  { command: 'status', description: 'Статус системы' },
+  { command: 'help', description: 'Помощь' },
+];
+
 async function ensureBotCommands(token: string) {
   await Promise.all([
-    tgApi(token, 'setMyCommands', {
-      commands: [
-        { command: 'carousel', description: 'Карусель по знаку зодиака' },
-        { command: 'compat', description: 'Совместимость двух знаков' },
-        { command: 'all', description: 'Все 12 знаков на одну тему' },
-        { command: 'rubric', description: 'Карусель по рубрике' },
-        { command: 'random', description: 'Случайная карусель' },
-        { command: 'meme', description: 'Мем-карусель' },
-        { command: 'gift', description: 'Карусель «Подарок»' },
-        { command: 'schedule', description: 'Настроить время доставки' },
-        { command: 'status', description: 'Статус системы' },
-        { command: 'help', description: 'Помощь' },
-      ],
-    }),
-    tgApi(token, 'setChatMenuButton', {
-      menu_button: { type: 'commands' },
-    }),
+    tgApi(token, 'setMyCommands', { commands: BOT_COMMAND_LIST }),
+    tgApi(token, 'setChatMenuButton', { menu_button: { type: 'commands' } }),
   ]);
+}
+
+// Авто-обновление команд при каждом холодном старте (= каждый деплой Vercel)
+let commandsRegistered = false;
+async function maybeRegisterCommands(token: string) {
+  if (commandsRegistered) return;
+  commandsRegistered = true;
+  await ensureBotCommands(token).catch(() => {});
 }
 
 // --- Главное меню (всегда на экране) ---
@@ -232,6 +238,9 @@ export async function POST(request: Request) {
 
     const token = config.platforms.telegram.botToken;
     const adminChatId = config.platforms.telegram.reportChatId;
+
+    // Авто-регистрация команд при первом запросе после деплоя
+    await maybeRegisterCommands(token);
 
     // --- Нажатия inline-кнопок ---
     if (update.callback_query) {
