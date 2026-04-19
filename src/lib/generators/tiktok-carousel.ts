@@ -3,7 +3,7 @@
 // Generates 5-10 slides for TikTok photo carousel posts
 // Astrology + AI music themed content
 // ============================================================
-import type { AppConfig, BrandConfig, ContentRubric, ZodiacSign } from '../types';
+import type { AppConfig, ContentRubric, ZodiacSign } from '../types';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '../types';
 import { getActiveLLMProvider } from '../config';
 import { recordUsedTheme, getRecentThemes } from '../db';
