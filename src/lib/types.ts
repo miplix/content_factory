@@ -36,9 +36,9 @@ export const ZODIAC_RU: Record<ZodiacSign, string> = {
 };
 
 export const ZODIAC_EMOJI: Record<ZodiacSign, string> = {
-  aries: '\u2648', taurus: '\u2649', gemini: '\u264A', cancer: '\u264B',
-  leo: '\u264C', virgo: '\u264D', libra: '\u264E', scorpio: '\u264F',
-  sagittarius: '\u2650', capricorn: '\u2651', aquarius: '\u2652', pisces: '\u2653',
+  aries: '\u2648\uFE0F', taurus: '\u2649\uFE0F', gemini: '\u264A\uFE0F', cancer: '\u264B\uFE0F',
+  leo: '\u264C\uFE0F', virgo: '\u264D\uFE0F', libra: '\u264E\uFE0F', scorpio: '\u264F\uFE0F',
+  sagittarius: '\u2650\uFE0F', capricorn: '\u2651\uFE0F', aquarius: '\u2652\uFE0F', pisces: '\u2653\uFE0F',
 };
 
 // --- Content Rubrics (20 rubrics from strategy) ---

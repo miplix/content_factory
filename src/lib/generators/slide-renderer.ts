@@ -64,6 +64,7 @@ export interface SlideContent {
   slideNumber: number;
   totalSlides: number;
   zodiacSign?: ZodiacSign;
+  zodiacSign2?: ZodiacSign;
   isCover?: boolean;
   isCTA?: boolean;
 }
@@ -111,7 +112,11 @@ function buildSlideTree(content: SlideContent) {
     : `linear-gradient(135deg, ${COLORS.deepSpace} 0%, ${COLORS.cosmicBlue} 50%, ${COLORS.deepPurple} 100%)`;
 
   const stars = generateStars(40);
-  const signName = content.zodiacSign ? ZODIAC_RU[content.zodiacSign].toUpperCase() : 'YUPSOUL';
+  const signName = content.zodiacSign
+    ? content.zodiacSign2
+      ? `${ZODIAC_RU[content.zodiacSign].toUpperCase()} / ${ZODIAC_RU[content.zodiacSign2].toUpperCase()}`
+      : ZODIAC_RU[content.zodiacSign].toUpperCase()
+    : 'YUPSOUL';
 
   return {
     type: 'div',
@@ -271,16 +276,22 @@ function twemojiCodePoint(text: string): string {
 // Small per-process cache so repeat emojis within one render pass hit memory.
 const twemojiCache = new Map<string, string>();
 
-async function fetchTwemojiDataUrl(emoji: string): Promise<string> {
+async function fetchTwemojiDataUrl(emoji: string): Promise<string | undefined> {
   const code = twemojiCodePoint(emoji);
-  if (!code) return '';
+  if (!code) return undefined;
   const cached = twemojiCache.get(code);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) return cached || undefined;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3000);
   try {
-    const res = await fetch(`https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg`);
+    const res = await fetch(
+      `https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/${code}.svg`,
+      { signal: controller.signal },
+    );
     if (!res.ok) {
       twemojiCache.set(code, '');
-      return '';
+      return undefined;
     }
     const svg = await res.text();
     const dataUrl = `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
@@ -288,7 +299,9 @@ async function fetchTwemojiDataUrl(emoji: string): Promise<string> {
     return dataUrl;
   } catch {
     twemojiCache.set(code, '');
-    return '';
+    return undefined;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -307,9 +320,9 @@ export async function renderSlide(content: SlideContent): Promise<Buffer> {
     ],
     loadAdditionalAsset: async (code: string, segment: string) => {
       if (code === 'emoji') {
-        // Return twemoji SVG data URL — Satori renders it as an image inline.
-        // If fetch fails, fall back to the NotoEmoji font (monochrome white).
-        return (await fetchTwemojiDataUrl(segment)) || '';
+        // Return twemoji SVG data URL for colored emoji rendering.
+        // undefined → Satori falls back to NotoEmoji font (monochrome white).
+        return await fetchTwemojiDataUrl(segment);
       }
       return [];
     },

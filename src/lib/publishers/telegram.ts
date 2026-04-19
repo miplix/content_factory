@@ -219,41 +219,42 @@ export async function sendCarouselAsImages(
     hashtags: string[];
     rubric?: string;
     zodiacSign?: string;
+    zodiacSign2?: string;
   },
   config: TelegramConfig
 ): Promise<void> {
-  // Header message
-  const header = [
-    '<b>TikTok-карусель</b>',
-    `<b>${carousel.title}</b>`,
-    carousel.rubric ? `${carousel.rubric}${carousel.zodiacSign ? ' | ' + carousel.zodiacSign : ''}` : '',
-  ].filter(Boolean).join('\n');
+  try {
+    const { renderCarousel } = await import('../generators/slide-renderer');
+    const images = await renderCarousel(
+      carousel.slides.map(s => ({
+        text: s.text,
+        description: s.description || undefined,
+        slideNumber: s.slideNumber,
+        totalSlides: carousel.slides.length,
+        zodiacSign: carousel.zodiacSign as never,
+        zodiacSign2: carousel.zodiacSign2 as never,
+      }))
+    );
 
-  await telegramApi(config.botToken, 'sendMessage', {
-    chat_id: config.reportChatId,
-    text: header,
-    parse_mode: 'HTML',
-  });
+    // title\n\ncaption\n\nhashtags — no labels
+    const albumCaption = [
+      carousel.title,
+      '',
+      carousel.caption,
+      '',
+      carousel.hashtags.join(' '),
+    ].join('\n').slice(0, 1024);
 
-  // Render PNG slides
-  const { renderCarousel } = await import('../generators/slide-renderer');
-  const images = await renderCarousel(
-    carousel.slides.map(s => ({
-      text: s.text,
-      description: s.description || undefined,
-      slideNumber: s.slideNumber,
-      totalSlides: carousel.slides.length,
-      zodiacSign: carousel.zodiacSign as never,
-    }))
-  );
-
-  // Caption for the album (TikTok caption + hashtags)
-  const albumCaption = [
-    `<b>Подпись:</b> ${carousel.caption}`,
-    carousel.hashtags.join(' '),
-  ].join('\n').slice(0, 1024); // Telegram caption limit
-
-  await sendCarouselAlbum(images, albumCaption, config);
+    await sendCarouselAlbum(images, albumCaption, config);
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    await telegramApi(config.botToken, 'sendMessage', {
+      chat_id: config.reportChatId,
+      text: `⚠️ Ошибка при генерации карусели:\n<code>${msg.slice(0, 500)}</code>`,
+      parse_mode: 'HTML',
+    }).catch(() => {});
+    throw error;
+  }
 }
 
 // --- Health Check ---
