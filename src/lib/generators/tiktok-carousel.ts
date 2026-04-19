@@ -106,6 +106,35 @@ const RUBRIC_SLIDE_TEMPLATES: Partial<Record<ContentRubric, {
 Слайд 4: Как это работает (3 шага: введи дату → AI создаёт → слушай)
 Слайд 5: CTA — "Создай подарок — первая песня бесплатно! Ссылка в шапке профиля"`,
   },
+  signs_in_business: {
+    slideCount: 7,
+    structure: `Слайд 1: Хук — "Какой ты в бизнесе — по знаку зодиака?" (провокация)
+Слайд 2: Сильная сторона знака в работе и переговорах
+Слайд 3: Слабость и как её использовать
+Слайд 4: С кем этот знак лучше всего в команде
+Слайд 5: Как этот знак зарабатывает и тратит деньги
+Слайд 6: Идеальная бизнес-роль для этого знака
+Слайд 7: CTA — "Твоя деловая мелодия — первая песня бесплатно! Ссылка в шапке профиля"`,
+  },
+  month_ahead: {
+    slideCount: 6,
+    structure: `Слайд 1: Хук — "Что ждёт [знак] в этом месяце?" (вызывает интерес)
+Слайд 2: Общая астрологическая обстановка месяца для знака
+Слайд 3: Любовь и отношения
+Слайд 4: Карьера и деньги
+Слайд 5: Энергия и здоровье. Совет месяца.
+Слайд 6: CTA — "Послушай мелодию своего месяца — первая песня бесплатно! Ссылка в шапке профиля"`,
+  },
+  zodiac_life_examples: {
+    slideCount: 7,
+    structure: `Слайд 1: Хук — конкретная смешная/узнаваемая ситуация из жизни знака
+Слайд 2: Как [знак] реагирует на стресс — конкретный пример
+Слайд 3: [Знак] в отношениях — реальный сценарий
+Слайд 4: [Знак] на работе — узнаваемая ситуация
+Слайд 5: Цитата, которую [знак] говорит чаще всего
+Слайд 6: "Ты [знак]? Напиши в комментариях узнал ли себя!"
+Слайд 7: CTA — "Первая песня бесплатно! Ссылка в шапке профиля"`,
+  },
 };
 
 // --- Прямой вызов LLM для карусели (без лимита TikTok caption) ---
@@ -383,6 +412,136 @@ function getGenreForSign(sign?: ZodiacSign): string {
     pisces: 'эмбиент, дрим-поп',
   };
   return sign ? genres[sign] : 'что-то космическое';
+}
+
+// --- Пул тем для карусели «Все 12 знаков» ---
+const ALLSIGNS_THEMES = [
+  'когда злятся', 'когда влюблены', 'в рабочем чате',
+  'когда одни дома', 'в очереди', 'когда планируют отпуск',
+  'утром в понедельник', 'во время экзамена', 'когда что-то идёт не так',
+  'в деловых переговорах', 'когда получают похвалу', 'в пятницу вечером',
+  'на первом свидании', 'когда опаздывают', 'в тренажёрном зале',
+  'при виде счёта в ресторане', 'во время ретрограда Меркурия',
+  'когда выбирают подарок', 'когда не хотят на вечеринку', 'после полуночи',
+];
+
+export function pickAllSignsTheme(): string {
+  return ALLSIGNS_THEMES[Math.floor(Math.random() * ALLSIGNS_THEMES.length)];
+}
+
+// --- Карусель «Все 12 знаков на одну тему» ---
+// Структура: хук + 6 слайдов (по 2 знака) + CTA = 8 слайдов
+export async function generateAllSignsCarousel(params: {
+  theme?: string; // если не задана — берём из пула
+  config: AppConfig;
+}): Promise<TikTokCarousel> {
+  const { config } = params;
+  const theme = params.theme || pickAllSignsTheme();
+  const botUrl = config.brand.botUrl || 'https://t.me/Yup_Soul_bot?start=ref_miplix';
+
+  const systemPrompt = `Ты создаёшь TikTok-карусель про знаки зодиака для бренда YupSoul (AI-музыка по дате рождения).
+Стиль: смешной, меткий, узнаваемый. Аудитория: женщины 18-35.
+Каждая фраза — конкретный образ или поступок, НЕ абстрактное описание.
+Хорошо: "Смотрит всем в лицо и ждёт извинений первым"
+Плохо: "Очень эмоциональный и не любит конфликты"`;
+
+  const prompt = `Тема: "Знаки зодиака: ${theme}"
+
+Напиши для каждого знака зодиака ОДНУ короткую меткую фразу (7-14 слов) про то, как они ведут себя в этой ситуации.
+Возвращай ТОЛЬКО JSON без markdown:
+{
+  "aries": "...",
+  "taurus": "...",
+  "gemini": "...",
+  "cancer": "...",
+  "leo": "...",
+  "virgo": "...",
+  "libra": "...",
+  "scorpio": "...",
+  "sagittarius": "...",
+  "capricorn": "...",
+  "aquarius": "...",
+  "pisces": "..."
+}`;
+
+  let descriptions: Record<ZodiacSign, string> | null = null;
+
+  const provider = getActiveLLMProvider(config);
+  if (provider) {
+    try {
+      const raw = await callCarouselLLM(prompt, systemPrompt, config);
+      const match = raw.match(/\{[\s\S]*\}/);
+      if (match) {
+        const parsed = JSON.parse(match[0]);
+        if (ZODIAC_SIGNS.every(s => typeof parsed[s] === 'string')) {
+          descriptions = parsed as Record<ZodiacSign, string>;
+        }
+      }
+    } catch { /* fallback below */ }
+  }
+
+  // Фоллбек — короткие шутливые описания
+  if (!descriptions) {
+    const fallbacks: Record<ZodiacSign, string> = {
+      aries: 'Действует первым, думает потом',
+      taurus: 'Игнорирует всех и ест',
+      gemini: 'Уже придумал три версии событий',
+      cancer: 'Обиделся, но виду не показывает',
+      leo: 'Уже фотографируется для истории',
+      virgo: 'Составляет план действий',
+      libra: 'Взвешивает за и против уже 40 минут',
+      scorpio: 'Молчит и всё запоминает',
+      sagittarius: 'Превратил это в приключение',
+      capricorn: 'Это уже в списке задач',
+      aquarius: 'Философствует вместо того чтобы действовать',
+      pisces: 'Уплыл в свои мысли',
+    };
+    descriptions = fallbacks;
+  }
+
+  // Пары знаков для слайдов
+  const PAIRS: [ZodiacSign, ZodiacSign][] = [
+    ['aries', 'taurus'],
+    ['gemini', 'cancer'],
+    ['leo', 'virgo'],
+    ['libra', 'scorpio'],
+    ['sagittarius', 'capricorn'],
+    ['aquarius', 'pisces'],
+  ];
+
+  const hookText = `Знаки зодиака ${theme} ✨`;
+
+  const contentSlides: CarouselSlide[] = PAIRS.map(([a, b], idx) => ({
+    text: `${ZODIAC_EMOJI[a]} ${ZODIAC_RU[a]}\n${descriptions![a]}\n\n${ZODIAC_EMOJI[b]} ${ZODIAC_RU[b]}\n${descriptions![b]}`,
+    description: '',
+    imagePrompt: buildSlideImagePrompt('zodiac_all_twelve'),
+    slideNumber: idx + 2,
+  }));
+
+  const slides: CarouselSlide[] = [
+    {
+      text: hookText,
+      description: 'Свайпни — найди свой знак 👇',
+      imagePrompt: buildSlideImagePrompt('zodiac_all_twelve', undefined, 0),
+      slideNumber: 1,
+    },
+    ...contentSlides,
+    {
+      text: `Первая песня — бесплатно! ✨\nСсылка в шапке профиля`,
+      description: botUrl,
+      imagePrompt: buildSlideImagePrompt('zodiac_all_twelve', undefined, 7),
+      slideNumber: 8,
+    },
+  ];
+
+  return {
+    title: hookText,
+    slides,
+    caption: `Все знаки зодиака ${theme} — найди себя! 🌟`,
+    hashtags: ['#астрология', '#знакизодиака', '#гороскоп', '#рек', '#yupsoul'],
+    coverSlideIndex: 0,
+    rubric: 'zodiac_all_twelve',
+  };
 }
 
 // --- Массовая генерация карусели на неделю ---

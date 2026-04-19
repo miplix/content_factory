@@ -6,11 +6,11 @@ import { NextResponse } from 'next/server';
 import { loadConfig } from '@/lib/config';
 import { getActiveLLMProvider, getActiveImageProvider, getEnabledPlatforms } from '@/lib/config';
 import { validateSystem } from '@/lib/validator';
-import { generateTikTokCarousel } from '@/lib/generators/tiktok-carousel';
+import { generateTikTokCarousel, generateAllSignsCarousel, pickAllSignsTheme } from '@/lib/generators/tiktok-carousel';
 import { sendCarouselAsImages } from '@/lib/publishers/telegram';
-import { getContentItems } from '@/lib/db';
+import { getContentItems, getDeliveryHours, setDeliveryHours } from '@/lib/db';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
-import type { ZodiacSign, ContentRubric } from '@/lib/types';
+import type { ZodiacSign, ContentRubric, AppConfig, TelegramConfig } from '@/lib/types';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -34,10 +34,12 @@ async function ensureBotCommands(token: string) {
       commands: [
         { command: 'carousel', description: 'Карусель по знаку зодиака' },
         { command: 'compat', description: 'Совместимость двух знаков' },
+        { command: 'all', description: 'Все 12 знаков на одну тему' },
         { command: 'rubric', description: 'Карусель по рубрике' },
         { command: 'random', description: 'Случайная карусель' },
         { command: 'meme', description: 'Мем-карусель' },
         { command: 'gift', description: 'Карусель «Подарок»' },
+        { command: 'schedule', description: 'Настроить время доставки' },
         { command: 'status', description: 'Статус системы' },
         { command: 'help', description: 'Помощь' },
       ],
@@ -52,7 +54,8 @@ async function ensureBotCommands(token: string) {
 const MAIN_MENU = {
   keyboard: [
     [{ text: 'Карусель по знаку' }, { text: 'Совместимость' }],
-    [{ text: 'Случайная' }, { text: 'Рубрика' }],
+    [{ text: 'Все 12 знаков' }, { text: 'Рубрика' }],
+    [{ text: 'Случайная' }, { text: 'Расписание' }],
     [{ text: 'Статус' }, { text: 'Помощь' }],
   ],
   resize_keyboard: true,
@@ -79,6 +82,9 @@ const BOT_RUBRICS: ContentRubric[] = [
   'gift',
   'astro_facts',
   'daily_energy',
+  'signs_in_business',
+  'month_ahead',
+  'zodiac_life_examples',
 ];
 
 function rubricKeyboard() {
@@ -99,8 +105,10 @@ const MENU_ALIASES: Record<string, string> = {
   'карусель по знаку': '/carousel',
   'карусель': '/carousel',
   'совместимость': '/compat',
+  'все 12 знаков': '/all',
   'случайная': '/random',
   'рубрика': '/rubric',
+  'расписание': '/schedule',
   'статус': '/status',
   'помощь': '/help',
 };
@@ -112,10 +120,12 @@ const HELP_TEXT = [
   '',
   '/carousel — карусель по знаку зодиака',
   '/compat — совместимость двух знаков',
+  '/all [тема] — все 12 знаков на одну тему',
   '/rubric — карусель по выбранной рубрике',
   '/random — случайная карусель',
   '/meme — мем-карусель',
   '/gift — карусель «Подарок»',
+  '/schedule — настроить время автодоставки',
   '/status — статус системы',
   '/validate — диагностика',
 ].join('\n');
@@ -134,8 +144,82 @@ interface TelegramUpdate {
   };
 }
 
-// Состояние для двухшаговых сценариев (совместимость)
+// --- Клавиатура настройки расписания ---
+const SCHED_HOURS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+
+function scheduleKeyboard(activeHours: number[]) {
+  const rows: Array<Array<{ text: string; callback_data: string }>> = [];
+  for (let i = 0; i < SCHED_HOURS.length; i += 4) {
+    rows.push(
+      SCHED_HOURS.slice(i, i + 4).map(h => ({
+        text: activeHours.includes(h) ? `✅ ${h}:00` : `${h}:00`,
+        callback_data: `sched:${h}`,
+      })),
+    );
+  }
+  return { inline_keyboard: rows };
+}
+
+function scheduleText(hours: number[]): string {
+  const list = hours.length ? hours.map(h => `${h}:00`).join(', ') : 'не выбрано';
+  return [
+    '⏰ <b>Расписание доставки</b> (время Тбилиси)',
+    '',
+    `Активные часы: <b>${list}</b>`,
+    '',
+    'Нажми на час чтобы включить или выключить.',
+    '<i>Для постоянного сохранения обнови DELIVERY_HOURS в настройках Vercel.</i>',
+  ].join('\n');
+}
+
+// Состояние для двухшаговых сценариев
 const pendingCompat: Map<number, { sign1: ZodiacSign }> = new Map();
+
+// Параметры для кнопки «Повторить»
+interface RetryParams {
+  type: 'carousel' | 'compat' | 'rubric' | 'all';
+  rubric?: ContentRubric;
+  zodiacSign?: ZodiacSign;
+  zodiacSign2?: ZodiacSign;
+  theme?: string;
+}
+const pendingRetry = new Map<string, RetryParams>();
+
+// --- Генерация + отправка с кнопкой «Повторить» при ошибке ---
+async function generateAndSend(
+  params: RetryParams,
+  chatId: string | number,
+  token: string,
+  config: AppConfig,
+  tgCfg: TelegramConfig,
+) {
+  try {
+    let carousel;
+    if (params.type === 'all') {
+      carousel = await generateAllSignsCarousel({ theme: params.theme, config });
+    } else {
+      carousel = await generateTikTokCarousel({
+        rubric: params.rubric!,
+        zodiacSign: params.zodiacSign,
+        zodiacSign2: params.zodiacSign2,
+        config,
+      });
+    }
+    await sendCarouselAsImages(carousel, tgCfg);
+  } catch (error) {
+    const retryId = Math.random().toString(36).slice(2, 10);
+    pendingRetry.set(retryId, params);
+    setTimeout(() => pendingRetry.delete(retryId), 3_600_000);
+
+    const msg = error instanceof Error ? error.message.slice(0, 200) : String(error);
+    await tgApi(token, 'sendMessage', {
+      chat_id: chatId,
+      text: `⚠️ Не удалось сгенерировать карусель:\n<code>${escapeHtml(msg)}</code>`,
+      parse_mode: 'HTML',
+      reply_markup: { inline_keyboard: [[{ text: '🔄 Повторить', callback_data: `retry:${retryId}` }]] },
+    });
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -157,9 +241,43 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true });
       }
 
-      await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Генерирую…' });
+      const colonIdx = data.indexOf(':');
+      const prefix = colonIdx >= 0 ? data.slice(0, colonIdx) : data;
+      const value = colonIdx >= 0 ? data.slice(colonIdx + 1) : '';
 
-      const [prefix, value] = data.split(':');
+      // --- Расписание ---
+      if (prefix === 'sched') {
+        const hour = parseInt(value);
+        const hours = getDeliveryHours();
+        const idx = hours.indexOf(hour);
+        if (idx >= 0) hours.splice(idx, 1); else hours.push(hour);
+        setDeliveryHours(hours);
+
+        await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id });
+        await tgApi(token, 'editMessageText', {
+          chat_id: chatId,
+          message_id: cb.message?.message_id,
+          text: scheduleText(getDeliveryHours()),
+          parse_mode: 'HTML',
+          reply_markup: scheduleKeyboard(getDeliveryHours()),
+        });
+        return NextResponse.json({ ok: true });
+      }
+
+      // --- Повтор после ошибки ---
+      if (prefix === 'retry') {
+        const params = pendingRetry.get(value);
+        if (!params) {
+          await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Время истекло — начни заново' });
+          return NextResponse.json({ ok: true });
+        }
+        await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Повторяю…' });
+        await tgApi(token, 'sendMessage', { chat_id: chatId, text: '🔄 Повторная генерация…' });
+        await generateAndSend(params, chatId, token, config, config.platforms.telegram!);
+        return NextResponse.json({ ok: true });
+      }
+
+      await tgApi(token, 'answerCallbackQuery', { callback_query_id: cb.id, text: 'Генерирую…' });
 
       if (prefix === 'car') {
         const sign = value as ZodiacSign;
@@ -167,12 +285,10 @@ export async function POST(request: Request) {
           chat_id: chatId,
           text: `${ZODIAC_EMOJI[sign]} Генерирую карусель для знака «${ZODIAC_RU[sign]}»…`,
         });
-        const carousel = await generateTikTokCarousel({
-          rubric: 'zodiac_sound',
-          zodiacSign: sign,
-          config,
-        });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'carousel', rubric: 'zodiac_sound', zodiacSign: sign },
+          chatId, token, config, config.platforms.telegram!,
+        );
         return NextResponse.json({ ok: true });
       }
 
@@ -197,26 +313,25 @@ export async function POST(request: Request) {
           chat_id: chatId,
           text: `${ZODIAC_EMOJI[sign1]} ${ZODIAC_RU[sign1]} + ${ZODIAC_EMOJI[sign2]} ${ZODIAC_RU[sign2]} — генерирую…`,
         });
-
-        const carousel = await generateTikTokCarousel({
-          rubric: 'compatibility',
-          zodiacSign: sign1,
-          zodiacSign2: sign2,
-          config,
-        });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'compat', rubric: 'compatibility', zodiacSign: sign1, zodiacSign2: sign2 },
+          chatId, token, config, config.platforms.telegram!,
+        );
         return NextResponse.json({ ok: true });
       }
 
       if (prefix === 'rub') {
         const rubric = value as ContentRubric;
-        if (rubric === 'signs_as_genres' || rubric === 'daily_energy') {
+        const noSignRubrics: ContentRubric[] = ['signs_as_genres', 'daily_energy', 'signs_in_business', 'zodiac_all_twelve'];
+        if (noSignRubrics.includes(rubric)) {
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
             text: `Генерирую карусель «${RUBRIC_RU[rubric]}»…`,
           });
-          const carousel = await generateTikTokCarousel({ rubric, config });
-          await sendCarouselAsImages(carousel, config.platforms.telegram!);
+          await generateAndSend(
+            { type: 'carousel', rubric },
+            chatId, token, config, config.platforms.telegram!,
+          );
         } else {
           await tgApi(token, 'sendMessage', {
             chat_id: chatId,
@@ -234,9 +349,10 @@ export async function POST(request: Request) {
           chat_id: chatId,
           text: `${ZODIAC_EMOJI[sign]} «${RUBRIC_RU[rubric]}» для знака «${ZODIAC_RU[sign]}» — генерирую…`,
         });
-
-        const carousel = await generateTikTokCarousel({ rubric, zodiacSign: sign, config });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'rubric', rubric, zodiacSign: sign },
+          chatId, token, config, config.platforms.telegram!,
+        );
         return NextResponse.json({ ok: true });
       }
 
@@ -304,18 +420,40 @@ export async function POST(request: Request) {
         break;
       }
 
+      case '/all': {
+        const theme = raw.replace(/^\/all/i, '').trim() || pickAllSignsTheme();
+        await tgApi(token, 'sendMessage', {
+          chat_id: chatId,
+          text: `Генерирую карусель для всех 12 знаков: «${theme}»…`,
+        });
+        await generateAndSend(
+          { type: 'all', theme },
+          chatId, token, config, config.platforms.telegram!,
+        );
+        break;
+      }
+
+      case '/schedule': {
+        const hours = getDeliveryHours();
+        await tgApi(token, 'sendMessage', {
+          chat_id: chatId,
+          text: scheduleText(hours),
+          parse_mode: 'HTML',
+          reply_markup: scheduleKeyboard(hours),
+        });
+        break;
+      }
+
       case '/meme': {
         const randomSign = ZODIAC_SIGNS[Math.floor(Math.random() * 12)];
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
           text: 'Генерирую мем-карусель…',
         });
-        const carousel = await generateTikTokCarousel({
-          rubric: 'zodiac_memes',
-          zodiacSign: randomSign,
-          config,
-        });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'carousel', rubric: 'zodiac_memes', zodiacSign: randomSign },
+          chatId, token, config, config.platforms.telegram!,
+        );
         break;
       }
 
@@ -324,16 +462,18 @@ export async function POST(request: Request) {
           chat_id: chatId,
           text: 'Генерирую карусель «Подарок»…',
         });
-        const carousel = await generateTikTokCarousel({
-          rubric: 'gift',
-          config,
-        });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'carousel', rubric: 'gift' },
+          chatId, token, config, config.platforms.telegram!,
+        );
         break;
       }
 
       case '/random': {
-        const rub = BOT_RUBRICS[Math.floor(Math.random() * BOT_RUBRICS.length)];
+        const allRubrics: ContentRubric[] = [
+          ...BOT_RUBRICS, 'signs_in_business', 'month_ahead', 'zodiac_life_examples',
+        ];
+        const rub = allRubrics[Math.floor(Math.random() * allRubrics.length)];
         const sign = ZODIAC_SIGNS[Math.floor(Math.random() * 12)];
         const sign2 = rub === 'compatibility' ? ZODIAC_SIGNS[Math.floor(Math.random() * 12)] : undefined;
 
@@ -341,14 +481,10 @@ export async function POST(request: Request) {
           chat_id: chatId,
           text: `Случайная карусель: «${RUBRIC_RU[rub]}» ${ZODIAC_EMOJI[sign]} ${ZODIAC_RU[sign]}…`,
         });
-
-        const carousel = await generateTikTokCarousel({
-          rubric: rub,
-          zodiacSign: sign,
-          zodiacSign2: sign2,
-          config,
-        });
-        await sendCarouselAsImages(carousel, config.platforms.telegram!);
+        await generateAndSend(
+          { type: 'carousel', rubric: rub, zodiacSign: sign, zodiacSign2: sign2 },
+          chatId, token, config, config.platforms.telegram!,
+        );
         break;
       }
 
