@@ -62,7 +62,11 @@ export type ContentRubric =
   | 'morning_ritual'         // Утренний ритуал
   | 'tutorial'               // Как это работает
   | 'reviews'                // Отзывы и истории
-  | 'cosmic_news';           // Cosmic news
+  | 'cosmic_news'            // Cosmic news
+  | 'signs_in_business'      // Знаки в бизнесе
+  | 'month_ahead'            // Что ждёт в этом месяце
+  | 'zodiac_life_examples'   // Знаки в жизни: примеры и ситуации
+  | 'zodiac_all_twelve';     // Все 12 знаков на одну тему
 
 export const RUBRIC_RU: Record<ContentRubric, string> = {
   zodiac_sound: 'Звук твоего знака',
@@ -85,6 +89,10 @@ export const RUBRIC_RU: Record<ContentRubric, string> = {
   tutorial: 'Как это работает',
   reviews: 'Отзывы и истории',
   cosmic_news: 'Cosmic news',
+  signs_in_business: 'Знаки в бизнесе',
+  month_ahead: 'Что ждёт в этом месяце',
+  zodiac_life_examples: 'Знаки в жизни',
+  zodiac_all_twelve: 'Все 12 знаков',
 };
 
 // --- Content Item ---

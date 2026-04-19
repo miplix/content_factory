@@ -8,16 +8,29 @@ import type { ContentItem, ContentPlan, DailyReport } from './types';
 // On Vercel free tier we use KV (1GB free) or fall back to edge config
 // For the skeleton, we use a simple in-memory + JSON approach
 
+interface AppSettings {
+  deliveryHours: number[]; // Tbilisi hours when daily cron sends carousels
+}
+
 interface DB {
   plans: ContentPlan[];
   items: ContentItem[];
   reports: DailyReport[];
+  settings: AppSettings;
+}
+
+function parseDeliveryHoursEnv(): number[] {
+  return (process.env.DELIVERY_HOURS || '8,21')
+    .split(',')
+    .map(Number)
+    .filter(h => !isNaN(h) && h >= 0 && h <= 23);
 }
 
 let store: DB = {
   plans: [],
   items: [],
   reports: [],
+  settings: { deliveryHours: parseDeliveryHoursEnv() },
 };
 
 // --- Vercel KV wrapper (will use @vercel/kv when deployed) ---
@@ -83,6 +96,15 @@ export async function getReports(days: number = 7): Promise<DailyReport[]> {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   return reports.filter(r => new Date(r.date) >= cutoff);
+}
+
+// --- Schedule Settings ---
+export function getDeliveryHours(): number[] {
+  return [...store.settings.deliveryHours];
+}
+
+export function setDeliveryHours(hours: number[]): void {
+  store.settings.deliveryHours = hours.filter(h => h >= 0 && h <= 23).sort((a, b) => a - b);
 }
 
 // --- Utility ---
