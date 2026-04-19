@@ -8,7 +8,7 @@ import { getActiveLLMProvider, getActiveImageProvider, getEnabledPlatforms } fro
 import { validateSystem } from '@/lib/validator';
 import { generateTikTokCarousel, generateAllSignsCarousel, pickAllSignsTheme } from '@/lib/generators/tiktok-carousel';
 import { sendCarouselAsImages } from '@/lib/publishers/telegram';
-import { getContentItems, getDeliveryHours, setDeliveryHours, getUsedThemesLog, getRecentThemes } from '@/lib/db';
+import { getDeliveryHours, setDeliveryHours, getUsedThemesLog, getRecentThemes } from '@/lib/db';
 import { ZODIAC_RU, ZODIAC_EMOJI, ZODIAC_SIGNS, RUBRIC_RU } from '@/lib/types';
 import type { ZodiacSign, ContentRubric, AppConfig, TelegramConfig } from '@/lib/types';
 
@@ -540,38 +540,28 @@ export async function POST(request: Request) {
       }
 
       case '/status': {
-        const items = await getContentItems();
-        const published = items.filter(i => i.status === 'published').length;
-        const planned = items.filter(i => i.status === 'planned').length;
-        const generated = items.filter(i => i.status === 'generated').length;
-        const failed = items.filter(i => i.status === 'failed').length;
-
         const llm = getActiveLLMProvider(config);
-        const img = getActiveImageProvider(config);
         const platforms = getEnabledPlatforms(config);
+        const themes = getUsedThemesLog(5);
+
+        const themeLines = themes.length
+          ? themes.map(u => {
+              const d = new Date(u.usedAt);
+              return `• ${u.theme} <i>(${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })})</i>`;
+            })
+          : ['• пока нет'];
 
         await tgApi(token, 'sendMessage', {
           chat_id: chatId,
           text: [
-            '<b>YupSoul — статус</b>',
+            '<b>YupSoul — статус системы</b>',
             '',
-            `Модель текста: <b>${llm || 'не настроено'}</b>`,
-            `Модель картинок: <b>${img || 'placeholder'}</b>`,
-            `Платформы: <b>${platforms.join(', ') || 'нет'}</b>`,
-            '',
-            `Запланировано: <b>${planned}</b>`,
-            `Сгенерировано: <b>${generated}</b>`,
-            `Опубликовано: <b>${published}</b>`,
-            `Ошибок: <b>${failed}</b>`,
-            `Всего: <b>${items.length}</b>`,
-            '',
-            `Расписание: <b>${getDeliveryHours().map(h => `${h}:00`).join(', ') || 'не задано'}</b>`,
+            `🤖 Модель: <b>${llm || 'не настроено'}</b>`,
+            `📡 Платформы: <b>${platforms.join(', ') || 'нет'}</b>`,
+            `⏰ Расписание: <b>${getDeliveryHours().map(h => `${h}:00`).join(', ') || 'не задано'}</b> (Тбилиси)`,
             '',
             '<b>Последние темы «Все 12 знаков»:</b>',
-            ...getUsedThemesLog(5).map(u => {
-              const d = new Date(u.usedAt);
-              return `• ${u.theme} <i>(${d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })})</i>`;
-            }),
+            ...themeLines,
           ].join('\n'),
           parse_mode: 'HTML',
         });
