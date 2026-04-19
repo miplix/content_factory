@@ -22,6 +22,7 @@ export interface TikTokCarousel {
   coverSlideIndex: number; // Какой слайд использовать как обложку
   rubric?: ContentRubric;
   zodiacSign?: ZodiacSign;
+  zodiacSign2?: ZodiacSign; // Для карусели совместимости
 }
 
 // --- Хук-формулы для первого слайда (вызывают свайп) ---
@@ -115,6 +116,8 @@ async function callCarouselLLM(prompt: string, systemPrompt: string, config: App
     const model = config.generation.geminiModel || 'gemini-2.5-flash-lite';
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.generation.geminiApiKey}`;
 
+    const abortCtrl = new AbortController();
+    const abortTimer = setTimeout(() => abortCtrl.abort(), 25_000);
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -123,7 +126,8 @@ async function callCarouselLLM(prompt: string, systemPrompt: string, config: App
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.9, maxOutputTokens: 4096 },
       }),
-    });
+      signal: abortCtrl.signal,
+    }).finally(() => clearTimeout(abortTimer));
 
     if (!response.ok) {
       const err = await response.text();
@@ -212,7 +216,9 @@ ${structure ? `Структура:\n${structure}` : ''}
   let caption: string;
 
   try {
-    const rawResponse = await callCarouselLLM(prompt, systemPrompt, config);
+    const rawResponse = await callCarouselLLM(prompt, systemPrompt, config).catch(() => {
+      throw new Error('LLM timeout or error');
+    });
 
     // Пробуем распарсить JSON
     const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
@@ -237,12 +243,12 @@ ${structure ? `Структура:\n${structure}` : ''}
       caption = '';
     }
   } catch {
-    return generateFallbackCarousel(rubric, zodiacSign, config);
+    return generateFallbackCarousel(rubric, zodiacSign, config, zodiacSign2);
   }
 
   // Гарантируем минимум слайдов
   if (slides.length < 4) {
-    return generateFallbackCarousel(rubric, zodiacSign, config);
+    return generateFallbackCarousel(rubric, zodiacSign, config, zodiacSign2);
   }
 
   // Последний слайд — всегда CTA
@@ -267,6 +273,7 @@ ${structure ? `Структура:\n${structure}` : ''}
     coverSlideIndex: 0,
     rubric,
     zodiacSign,
+    zodiacSign2,
   };
 }
 
@@ -309,7 +316,7 @@ function buildSlideImagePrompt(rubric: ContentRubric, sign?: ZodiacSign, slideIn
 }
 
 // --- Фоллбек карусель без LLM ---
-function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, config?: AppConfig): TikTokCarousel {
+function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, config?: AppConfig, sign2?: ZodiacSign): TikTokCarousel {
   const signName = sign ? ZODIAC_RU[sign] : '';
   const signEmoji = sign ? ZODIAC_EMOJI[sign] : '\u2728';
   const botUrl = config?.brand.botUrl || 'https://t.me/Yup_Soul_bot?start=ref_miplix';
@@ -355,6 +362,7 @@ function generateFallbackCarousel(rubric: ContentRubric, sign?: ZodiacSign, conf
     coverSlideIndex: 0,
     rubric,
     zodiacSign: sign,
+    zodiacSign2: sign2,
   };
 }
 
